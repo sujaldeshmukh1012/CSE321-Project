@@ -1,4 +1,4 @@
-````markdown
+
 # Project Setup Guide (PlatformIO)
 
 ## Prerequisites
@@ -10,7 +10,7 @@
 ```bash
 git clone git@github.com:sujaldeshmukh1012/CSE321-Project.git
 cd CSE321-Project
-````
+
 
 ## Open the Project
 

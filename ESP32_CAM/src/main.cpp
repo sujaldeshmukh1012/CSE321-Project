@@ -1,157 +1,60 @@
+// ===========================================================
+// ESP32 MPU6050 Reader (I2C using Wire)
+// - Continuously reads accel + gyro data
+// - Prints Roll, Pitch, and raw sensor values
+// ===========================================================
+
 #include <Arduino.h>
-#include <WiFi.h>
-#include "esp_camera.h"
-#include "esp_http_server.h"
-#include "esp_wifi.h"
+#include <Wire.h>
+#include <MPU6050.h>  // from jarzebski/Arduino-MPU6050 or equivalent
 
-// -------- Wi-Fi credentials --------
-const char* ssid     = "UB_Devices";
-const char* password = "goubbulls";
+MPU6050 mpu;  // create IMU object
 
-// -------- Camera pins (XIAO ESP32-S3 Sense hat) --------
-#define PWDN_GPIO_NUM  -1
-#define RESET_GPIO_NUM -1
-#define XCLK_GPIO_NUM  10
-#define SIOD_GPIO_NUM  40
-#define SIOC_GPIO_NUM  39
-#define Y9_GPIO_NUM    48
-#define Y8_GPIO_NUM    11
-#define Y7_GPIO_NUM    12
-#define Y6_GPIO_NUM    14
-#define Y5_GPIO_NUM    16
-#define Y4_GPIO_NUM    18
-#define Y3_GPIO_NUM    17
-#define Y2_GPIO_NUM    15
-#define VSYNC_GPIO_NUM 38
-#define HREF_GPIO_NUM  47
-#define PCLK_GPIO_NUM  13
-
-httpd_handle_t stream_httpd = NULL;
-
-// =====================================================================
-// ================= MJPEG Web-Stream server ===========================
-// =====================================================================
-static esp_err_t stream_handler(httpd_req_t *req) {
-  camera_fb_t * fb = NULL;
-  esp_err_t res = ESP_OK;
-  char part_buf[64];
-
-  res = httpd_resp_set_type(req, "multipart/x-mixed-replace;boundary=frame");
-  if (res != ESP_OK) return res;
-
-  while (true) {
-    fb = esp_camera_fb_get();
-    if (!fb) {
-      Serial.println("Camera capture failed");
-      continue;
-    }
-
-    snprintf(part_buf, 64,
-             "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %zu\r\n\r\n",
-             fb->len);
-    res = httpd_resp_send_chunk(req, part_buf, strlen(part_buf));
-    if (res == ESP_OK)
-      res = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
-    if (res == ESP_OK)
-      res = httpd_resp_send_chunk(req, "\r\n", 2);
-
-    esp_camera_fb_return(fb);
-    if (res != ESP_OK) break;
-    delay(30);   // adjust for FPS
-  }
-  return res;
-}
-
-static esp_err_t index_handler(httpd_req_t *req) {
-  const char* html =
-    "<html><body><h2>ESP32-S3 Camera Stream</h2>"
-    "<img src='/stream' width='640'>"
-    "</body></html>";
-  httpd_resp_set_type(req, "text/html");
-  return httpd_resp_send(req, html, strlen(html));
-}
-
-void startCameraServer() {
-  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.server_port = 80;
-
-  if (httpd_start(&stream_httpd, &config) == ESP_OK) {
-    httpd_uri_t index_uri  = { .uri="/",      .method=HTTP_GET,
-                               .handler=index_handler,  .user_ctx=NULL };
-    httpd_uri_t stream_uri = { .uri="/stream", .method=HTTP_GET,
-                               .handler=stream_handler, .user_ctx=NULL };
-    httpd_register_uri_handler(stream_httpd, &index_uri);
-    httpd_register_uri_handler(stream_httpd, &stream_uri);
-  }
-  Serial.println("Camera stream server started.");
-}
-
-// =====================================================================
-// =============================  SETUP  ===============================
-// =====================================================================
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-  Serial.println("\n=== XIAO ESP32-S3 Sense Camera Stream ===");
+  Wire.begin(); // SDA=21, SCL=22 by default on ESP32
+  Serial.println(F("\n=== ESP32 MPU6050 Test ==="));
 
-  // -------- Camera configuration --------
-  camera_config_t config;
-  config.ledc_channel = LEDC_CHANNEL_0;
-  config.ledc_timer   = LEDC_TIMER_0;
-  config.pin_d0 = Y2_GPIO_NUM;
-  config.pin_d1 = Y3_GPIO_NUM;
-  config.pin_d2 = Y4_GPIO_NUM;
-  config.pin_d3 = Y5_GPIO_NUM;
-  config.pin_d4 = Y6_GPIO_NUM;
-  config.pin_d5 = Y7_GPIO_NUM;
-  config.pin_d6 = Y8_GPIO_NUM;
-  config.pin_d7 = Y9_GPIO_NUM;
-  config.pin_xclk = XCLK_GPIO_NUM;
-  config.pin_pclk = PCLK_GPIO_NUM;
-  config.pin_vsync = VSYNC_GPIO_NUM;
-  config.pin_href = HREF_GPIO_NUM;
-  config.pin_sscb_sda = SIOD_GPIO_NUM;
-  config.pin_sscb_scl = SIOC_GPIO_NUM;
-  config.pin_pwdn = PWDN_GPIO_NUM;
-  config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size   = FRAMESIZE_QVGA;   // 320×240 (stable)
-  config.jpeg_quality = 12;
-  config.fb_count     = 2;
-  config.grab_mode    = CAMERA_GRAB_LATEST;
-
-  if (!psramFound()) {
-    Serial.println("⚠️ No PSRAM, reducing frame size");
-    config.frame_size = FRAMESIZE_QQVGA;
-    config.fb_count   = 1;
+  // Try both common addresses
+  if (!mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G, 0x68)) {
+    Serial.println(F("MPU6050 not found at 0x68, retrying 0x69..."));
+    if (!mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G, 0x69)) {
+      Serial.println(F("ERROR: MPU6050 not detected. Check wiring/power."));
+      while (1);
+    }
   }
 
-  if (esp_camera_init(&config) != ESP_OK) {
-    Serial.println("❌ Camera init failed!");
-    while (true) delay(1000);
-  }
-  Serial.println("✅ Camera initialized.");
+  mpu.calibrateGyro();
+  mpu.setThreshold(3);
 
-  // -------- Connect Wi-Fi --------
-  WiFi.mode(WIFI_STA);
-  esp_wifi_set_ps(WIFI_PS_NONE);
-  WiFi.begin(ssid, password);
-  Serial.printf("Connecting to Wi-Fi: %s", ssid);
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(500);
-  }
-  Serial.printf("\n✅ Connected! IP address: %s\n",
-                WiFi.localIP().toString().c_str());
-
-  // -------- Start MJPEG server --------
-  startCameraServer();
-  Serial.printf("Open → http://%s/\n", WiFi.localIP().toString().c_str());
-  Serial.printf("Stream → http://%s/stream\n",
-                WiFi.localIP().toString().c_str());
+  Serial.println(F("MPU6050 initialized.\n"));
+  delay(500);
 }
 
 void loop() {
-  delay(10000);
+  // --- Read normalized data ---
+  Vector normAccel = mpu.readNormalizeAccel();
+  Vector normGyro  = mpu.readNormalizeGyro();
+
+  // --- Compute simple tilt estimation ---
+  float roll  = atan2(normAccel.YAxis, normAccel.ZAxis) * 57.2958;
+  float pitch = atan(-normAccel.XAxis /
+                    sqrt(normAccel.YAxis * normAccel.YAxis +
+                         normAccel.ZAxis * normAccel.ZAxis)) * 57.2958;
+
+  // --- Display data ---
+  Serial.print(F("Roll: "));
+  Serial.print(roll, 2);
+  Serial.print(F("  Pitch: "));
+  Serial.print(pitch, 2);
+  Serial.print(F("  AccX: "));
+  Serial.print(normAccel.XAxis, 2);
+  Serial.print(F("  AccY: "));
+  Serial.print(normAccel.YAxis, 2);
+  Serial.print(F("  AccZ: "));
+  Serial.print(normAccel.ZAxis, 2);
+  Serial.print(F("  GyroZ: "));
+  Serial.println(normGyro.ZAxis, 2);
+
+  delay(250);
 }

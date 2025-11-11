@@ -39,139 +39,114 @@
     - MPU6050 (from i2cdevlib) or “MPU6050 by Electronic Cats”
 */
 
+/*
+  Master Controller — Arduino Nano + FreeRTOS (Simplified)
+
+  Components:
+    - 2x VL53L0X ToF sensors (I2C)
+    - PCA9685 16-ch servo driver (I2C)
+      * servos on channels:
+        0,1 = horizontal sweep (270°)
+        2,3 = vertical sweep (90°)
+    - IMU MPU6050 (I2C)
+    - Red LED (A0)
+    - Blue LED (A1)
+    - Passive Buzzer (D7)
+    - 4x Haptic motors on D3, D5, D6, D11
+*/
+
 #include <Arduino.h>
 #include <Arduino_FreeRTOS.h>
 #include <semphr.h>
 
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
-
-#include <AltSoftSerial.h>
-#include <TinyGPSPlus.h>
-
-#include <VL53L0X.h>            // Pololu library
-#include <MPU6050.h>            // uses Wire
+#include <VL53L0X.h>
+#include <MPU6050.h>
 
 /*********** Pin Map ***********/
 #define PIN_LED_RED      A0
 #define PIN_LED_BLUE     A1
-#define PIN_BUTTON       A2   // INPUT_PULLUP
 #define PIN_BUZZER       7
 
-#define PIN_HAPTIC_1     3    // PWM (Front)
-#define PIN_HAPTIC_2     5    // PWM (Right)
-#define PIN_HAPTIC_3     6    // PWM (Back)
-#define PIN_HAPTIC_4     11   // PWM (Left)
+#define PIN_HAPTIC_1     3    // Front
+#define PIN_HAPTIC_2     5    // Right
+#define PIN_HAPTIC_3     6    // Back
+#define PIN_HAPTIC_4     11   // Left
 
 #define PIN_TOF1_XSHUT   10
 #define PIN_TOF2_XSHUT   12
 
-// GPS on AltSoftSerial (Nano: RX=8, TX=9 fixed by library)
-AltSoftSerial gpsSerial;        // RX(D8) ← GPS TX,  TX(D9) → GPS RX (optional)
-/*******************************/
-
 /*********** PCA9685 ***********/
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 
-// 50 Hz for analog servos
 #define SERVO_PWM_FREQ      50
-
-// PCA9685 resolution and pulse mapping
-// 1 tick ≈ (1/50Hz)/4096 ≈ 4.88us
-// We'll map [500..2500] us to ticks
-#define US_TO_TICKS(us)     (uint16_t)((float)(us) * SERVO_PWM_FREQ * 4096.0f / 1000000.0f)
-
-// Tunables per-servo (adjust to your actual servos!)
 #define SERVO_MIN_US        500
 #define SERVO_MAX_US        2500
+#define US_TO_TICKS(us)     (uint16_t)((float)(us) * SERVO_PWM_FREQ * 4096.0f / 1000000.0f)
 
-// application angles
-#define H_SWEEP_MAX_DEG     270.0f  // channels 0,1
-#define V_SWEEP_MAX_DEG      90.0f  // channels 2,3
-
-// channels
+#define H_SWEEP_MAX_DEG     270.0f
+#define V_SWEEP_MAX_DEG      90.0f
 #define CH_H_RIG1            0
 #define CH_H_RIG2            1
 #define CH_V_RIG1            2
 #define CH_V_RIG2            3
 
-/*********** ToF ***********/
+/*********** ToF Sensors ***********/
 VL53L0X tof1, tof2;
-#define TOF1_ADDR            0x29      // after reassignment can remain 0x29
-#define TOF2_ADDR            0x2A      // second sensor gets 0x2A
-
-// Ranging settings (trade range vs speed)
-#define TOF_TIMING_BUDGET_US 20000UL    // 20 ms per sample (decent frame rate). You can lower to 10000 for faster, shorter-range.
+#define TOF1_ADDR 0x29
+#define TOF2_ADDR 0x2A
+#define TOF_TIMING_BUDGET_US 20000UL
 
 /*********** IMU ***********/
 MPU6050 imu;
 
-/*********** GPS ***********/
-TinyGPSPlus gps;
-
 /*********** FreeRTOS Sync ***********/
 SemaphoreHandle_t mapMutex;
 
-/*********** Mapping (memory-safe coarse grid) ***********/
-// Coarse grid to fit Nano RAM (2KB). 27x9 = 243 per rig. uint16_t => 486 bytes each.
-// Two rigs = ~972 bytes + metadata. Still tight but OK.
-#define H_CELLS   18   // 270° / 10°
-#define V_CELLS    6   //  90° / 10°
+/*********** Mapping ***********/
+#define H_CELLS   18
+#define V_CELLS    6
 
-static uint16_t mapRig1[V_CELLS][H_CELLS];  // mm; 0 = invalid
-static uint16_t mapRig2[V_CELLS][H_CELLS];  // mm; 0 = invalid
+static uint16_t mapRig1[V_CELLS][H_CELLS];
+static uint16_t mapRig2[V_CELLS][H_CELLS];
 
-// thresholds (mm) for haptic feedback
 #define OBSTACLE_NEAR_MM     350
 #define OBSTACLE_MID_MM      700
 #define OBSTACLE_FAR_MM     1200
 
-// PWM intensity for haptics [0..255]
 #define HAPTIC_PWM_NEAR      255
 #define HAPTIC_PWM_MID       160
 #define HAPTIC_PWM_FAR        80
 #define HAPTIC_PWM_OFF         0
 
 /*********** Utilities ***********/
-static inline uint16_t clamp16(int v, int lo, int hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
-  return (uint16_t)v;
-}
-
-// angle → microseconds (linear map). Adjust end-points to match your servo travel.
-// For a 270° servo across [SERVO_MIN_US..SERVO_MAX_US].
 static uint16_t angleToUs(float angleDeg, float maxDeg) {
   if (angleDeg < 0) angleDeg = 0;
   if (angleDeg > maxDeg) angleDeg = maxDeg;
-  float t = angleDeg / maxDeg; // 0..1
-  float us = SERVO_MIN_US + t * (SERVO_MAX_US - SERVO_MIN_US);
-  return (uint16_t)us;
+  float t = angleDeg / maxDeg;
+  return (uint16_t)(SERVO_MIN_US + t * (SERVO_MAX_US - SERVO_MIN_US));
 }
 
 static void writeServo(uint8_t channel, float angleDeg, float maxDeg) {
-  uint16_t us = angleToUs(angleDeg, maxDeg);
-  uint16_t ticks = US_TO_TICKS(us);
+  uint16_t ticks = US_TO_TICKS(angleToUs(angleDeg, maxDeg));
   pwm.setPWM(channel, 0, ticks);
 }
 
 static void beep(uint16_t ms) {
-  tone(PIN_BUZZER, 3000);  // ~3kHz
+  tone(PIN_BUZZER, 3000);
   vTaskDelay(pdMS_TO_TICKS(ms));
   noTone(PIN_BUZZER);
 }
 
-/*********** ToF bring-up with XSHUT ***********/
 static void initToFTwoSensors() {
   pinMode(PIN_TOF1_XSHUT, OUTPUT);
   pinMode(PIN_TOF2_XSHUT, OUTPUT);
 
-  // Hold both in reset
   digitalWrite(PIN_TOF1_XSHUT, LOW);
   digitalWrite(PIN_TOF2_XSHUT, LOW);
   vTaskDelay(pdMS_TO_TICKS(10));
 
-  // Start ToF1 only
   digitalWrite(PIN_TOF1_XSHUT, HIGH);
   vTaskDelay(pdMS_TO_TICKS(10));
   tof1.init(true);
@@ -179,7 +154,6 @@ static void initToFTwoSensors() {
   tof1.setMeasurementTimingBudget(TOF_TIMING_BUDGET_US);
   tof1.startContinuous();
 
-  // Start ToF2 only
   digitalWrite(PIN_TOF2_XSHUT, HIGH);
   vTaskDelay(pdMS_TO_TICKS(10));
   tof2.init(true);
@@ -188,25 +162,17 @@ static void initToFTwoSensors() {
   tof2.startContinuous();
 }
 
-/*********** Angle grid helpers ***********/
-static float hIndexToDeg(int h) { // 0..H_CELLS-1 -> 0..270
-  return (H_SWEEP_MAX_DEG * h) / (H_CELLS - 1);
-}
-static float vIndexToDeg(int v) { // 0..V_CELLS-1 -> 0..90
-  return (V_SWEEP_MAX_DEG * v) / (V_CELLS - 1);
-}
+static float hIndexToDeg(int h) { return (H_SWEEP_MAX_DEG * h) / (H_CELLS - 1); }
+static float vIndexToDeg(int v) { return (V_SWEEP_MAX_DEG * v) / (V_CELLS - 1); }
 
-/*********** Sector extraction (heuristic windows) ***********/
 static uint16_t minDistanceInWindow(uint16_t grid[V_CELLS][H_CELLS], int hCenterDeg, int hHalfWidthDeg) {
-  int minmm = 0; // 0 means none found
-  for (int v = V_CELLS/3; v <= (2*V_CELLS)/3; ++v) { // focus near middle vertical third
+  int minmm = 0;
+  for (int v = V_CELLS/3; v <= (2*V_CELLS)/3; ++v) {
     for (int h = 0; h < H_CELLS; ++h) {
       float ang = hIndexToDeg(h);
       if (ang >= (hCenterDeg - hHalfWidthDeg) && ang <= (hCenterDeg + hHalfWidthDeg)) {
         uint16_t d = grid[v][h];
-        if (d != 0) {
-          if (minmm == 0 || d < minmm) minmm = d;
-        }
+        if (d != 0 && (minmm == 0 || d < minmm)) minmm = d;
       }
     }
   }
@@ -222,21 +188,16 @@ static uint8_t levelFromDistance(uint16_t mm) {
 }
 
 /*********** Tasks ***********/
-// Task: Rig1 scan (servos 0 & 2 with tof1)
 void taskScanRig1(void *pv) {
   bool forward = true;
   for (;;) {
     for (int v = 0; v < V_CELLS; ++v) {
-      float vdeg = vIndexToDeg(v);
-      writeServo(CH_V_RIG1, vdeg, V_SWEEP_MAX_DEG);
+      writeServo(CH_V_RIG1, vIndexToDeg(v), V_SWEEP_MAX_DEG);
       vTaskDelay(pdMS_TO_TICKS(8));
-
       if (forward) {
         for (int h = 0; h < H_CELLS; ++h) {
-          float hdeg = hIndexToDeg(h);
-          writeServo(CH_H_RIG1, hdeg, H_SWEEP_MAX_DEG);
-          vTaskDelay(pdMS_TO_TICKS(6)); // settle a bit
-
+          writeServo(CH_H_RIG1, hIndexToDeg(h), H_SWEEP_MAX_DEG);
+          vTaskDelay(pdMS_TO_TICKS(6));
           uint16_t dist = tof1.readRangeContinuousMillimeters();
           xSemaphoreTake(mapMutex, portMAX_DELAY);
           mapRig1[v][h] = (tof1.timeoutOccurred() ? 0 : dist);
@@ -244,10 +205,8 @@ void taskScanRig1(void *pv) {
         }
       } else {
         for (int h = H_CELLS-1; h >= 0; --h) {
-          float hdeg = hIndexToDeg(h);
-          writeServo(CH_H_RIG1, hdeg, H_SWEEP_MAX_DEG);
+          writeServo(CH_H_RIG1, hIndexToDeg(h), H_SWEEP_MAX_DEG);
           vTaskDelay(pdMS_TO_TICKS(6));
-
           uint16_t dist = tof1.readRangeContinuousMillimeters();
           xSemaphoreTake(mapMutex, portMAX_DELAY);
           mapRig1[v][h] = (tof1.timeoutOccurred() ? 0 : dist);
@@ -259,21 +218,16 @@ void taskScanRig1(void *pv) {
   }
 }
 
-// Task: Rig2 scan (servos 1 & 3 with tof2)
 void taskScanRig2(void *pv) {
   bool forward = false;
   for (;;) {
     for (int v = 0; v < V_CELLS; ++v) {
-      float vdeg = vIndexToDeg(v);
-      writeServo(CH_V_RIG2, vdeg, V_SWEEP_MAX_DEG);
+      writeServo(CH_V_RIG2, vIndexToDeg(v), V_SWEEP_MAX_DEG);
       vTaskDelay(pdMS_TO_TICKS(8));
-
       if (forward) {
         for (int h = 0; h < H_CELLS; ++h) {
-          float hdeg = hIndexToDeg(h);
-          writeServo(CH_H_RIG2, hdeg, H_SWEEP_MAX_DEG);
+          writeServo(CH_H_RIG2, hIndexToDeg(h), H_SWEEP_MAX_DEG);
           vTaskDelay(pdMS_TO_TICKS(6));
-
           uint16_t dist = tof2.readRangeContinuousMillimeters();
           xSemaphoreTake(mapMutex, portMAX_DELAY);
           mapRig2[v][h] = (tof2.timeoutOccurred() ? 0 : dist);
@@ -281,10 +235,8 @@ void taskScanRig2(void *pv) {
         }
       } else {
         for (int h = H_CELLS-1; h >= 0; --h) {
-          float hdeg = hIndexToDeg(h);
-          writeServo(CH_H_RIG2, hdeg, H_SWEEP_MAX_DEG);
+          writeServo(CH_H_RIG2, hIndexToDeg(h), H_SWEEP_MAX_DEG);
           vTaskDelay(pdMS_TO_TICKS(6));
-
           uint16_t dist = tof2.readRangeContinuousMillimeters();
           xSemaphoreTake(mapMutex, portMAX_DELAY);
           mapRig2[v][h] = (tof2.timeoutOccurred() ? 0 : dist);
@@ -296,22 +248,15 @@ void taskScanRig2(void *pv) {
   }
 }
 
-// Task: Haptics (reads maps, drives motors)
 void taskHaptics(void *pv) {
   for (;;) {
     uint16_t r_front=0, r_back=0, r_right=0, r_left=0;
-
     xSemaphoreTake(mapMutex, portMAX_DELAY);
-    // Windows (deg): center ± halfwidth
-    // Right  from Rig1 around 135°
     r_right = minDistanceInWindow(mapRig1, 135, 20);
-    // Left   from Rig2 around 135°
     r_left  = minDistanceInWindow(mapRig2, 135, 20);
-    // Front: around ~90° (use best of both)
     uint16_t f1 = minDistanceInWindow(mapRig1, 90, 15);
     uint16_t f2 = minDistanceInWindow(mapRig2, 90, 15);
     r_front = (f1==0)?f2:((f2==0)?f1:min(f1,f2));
-    // Back: around ~180°
     uint16_t b1 = minDistanceInWindow(mapRig1, 180, 20);
     uint16_t b2 = minDistanceInWindow(mapRig2, 180, 20);
     r_back  = (b1==0)?b2:((b2==0)?b1:min(b1,b2));
@@ -327,46 +272,36 @@ void taskHaptics(void *pv) {
     analogWrite(PIN_HAPTIC_3, pwmBack);
     analogWrite(PIN_HAPTIC_4, pwmLeft);
 
-    // LEDs as simple status: blue if any obstacle in mid range; red if near
-    bool anyNear = (pwmFront==HAPTIC_PWM_NEAR || pwmRight==HAPTIC_PWM_NEAR || pwmBack==HAPTIC_PWM_NEAR || pwmLeft==HAPTIC_PWM_NEAR);
-    bool anyMid  = (pwmFront || pwmRight || pwmBack || pwmLeft);
+    // LED logic:
+    digitalWrite(PIN_LED_RED, LOW);
+    digitalWrite(PIN_LED_BLUE, LOW);
 
-    digitalWrite(PIN_LED_RED,  anyNear ? HIGH : LOW);
-    digitalWrite(PIN_LED_BLUE, anyMid  ? HIGH : LOW);
+    if (pwmRight > 0 && pwmLeft == 0) {
+      digitalWrite(PIN_LED_RED, HIGH); // obstacle right
+    } else if (pwmLeft > 0 && pwmRight == 0) {
+      digitalWrite(PIN_LED_BLUE, HIGH); // obstacle left
+    } else if (pwmFront > 0 && pwmBack == 0) {
+      digitalWrite(PIN_LED_RED, HIGH);
+      digitalWrite(PIN_LED_BLUE, HIGH); // both = front
+      beep(60);
+    } else if (pwmBack > 0 && pwmFront == 0) {
+      digitalWrite(PIN_LED_RED, HIGH);
+      beep(60);
+      vTaskDelay(pdMS_TO_TICKS(100));
+      digitalWrite(PIN_LED_RED, LOW);
+      digitalWrite(PIN_LED_BLUE, HIGH);
+      beep(60); // alternate = back
+    }
 
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
-// Task: GPS read + print
-void taskGPS(void *pv) {
-  for (;;) {
-    while (gpsSerial.available()) {
-      gps.encode(gpsSerial.read());
-    }
-    if (gps.location.isUpdated()) {
-      Serial.print(F("[GPS] "));
-      Serial.print(gps.location.lat(), 6);
-      Serial.print(F(","));
-      Serial.print(gps.location.lng(), 6);
-      Serial.print(F(" | sats="));
-      Serial.print(gps.satellites.value());
-      Serial.print(F(" | hdop="));
-      Serial.println(gps.hdop.hdop());
-    }
-    vTaskDelay(pdMS_TO_TICKS(250));
-  }
-}
-
-// Task: IMU read + print (simple)
 void taskIMU(void *pv) {
   for (;;) {
-    imu.getMotion6(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
-
     int16_t ax, ay, az, gx, gy, gz;
     imu.getAcceleration(&ax, &ay, &az);
     imu.getRotation(&gx, &gy, &gz);
-
     Serial.print(F("[IMU] Acc: "));
     Serial.print(ax); Serial.print(' ');
     Serial.print(ay); Serial.print(' ');
@@ -374,123 +309,43 @@ void taskIMU(void *pv) {
     Serial.print(gx); Serial.print(' ');
     Serial.print(gy); Serial.print(' ');
     Serial.println(gz);
-
-    vTaskDelay(pdMS_TO_TICKS(50));
-  }
-}
-
-// Task: Button + Buzzer heartbeat
-void taskUI(void *pv) {
-  bool lastBtn = HIGH;
-  for (;;) {
-    bool btn = digitalRead(PIN_BUTTON);
-    if (btn == LOW && lastBtn == HIGH) { // press edge
-      beep(80);
-    }
-    lastBtn = btn;
-
-    // tiny tick on buzzer every 3 seconds as alive
-    static uint32_t t0 = 0;
-    if (millis() - t0 > 3000) {
-      tone(PIN_BUZZER, 2200);
-      vTaskDelay(pdMS_TO_TICKS(20));
-      noTone(PIN_BUZZER);
-      t0 = millis();
-    }
-    vTaskDelay(pdMS_TO_TICKS(20));
-  }
-}
-
-// Task: Telemetry (periodic concise dump)
-void taskTelemetry(void *pv) {
-  for (;;) {
-    xSemaphoreTake(mapMutex, portMAX_DELAY);
-    // Print a thin slice for sanity: middle row from both rigs
-    int vmid = V_CELLS / 2;
-    Serial.print(F("[RIG1 mid-row mm]: "));
-    for (int h=0; h<H_CELLS; ++h) { Serial.print(mapRig1[vmid][h]); Serial.print(' '); }
-    Serial.println();
-
-    Serial.print(F("[RIG2 mid-row mm]: "));
-    for (int h=0; h<H_CELLS; ++h) { Serial.print(mapRig2[vmid][h]); Serial.print(' '); }
-    Serial.println();
-    xSemaphoreGive(mapMutex);
-
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
 /*********** Setup ***********/
 void setup() {
-  // IO
   pinMode(PIN_LED_RED, OUTPUT);
   pinMode(PIN_LED_BLUE, OUTPUT);
-  pinMode(PIN_BUTTON, INPUT_PULLUP);
   pinMode(PIN_BUZZER, OUTPUT);
-
   pinMode(PIN_HAPTIC_1, OUTPUT);
   pinMode(PIN_HAPTIC_2, OUTPUT);
   pinMode(PIN_HAPTIC_3, OUTPUT);
   pinMode(PIN_HAPTIC_4, OUTPUT);
 
-  analogWrite(PIN_HAPTIC_1, 0);
-  analogWrite(PIN_HAPTIC_2, 0);
-  analogWrite(PIN_HAPTIC_3, 0);
-  analogWrite(PIN_HAPTIC_4, 0);
-
   Serial.begin(115200);
-  while (!Serial) { ; }
+  Wire.begin();
+  Wire.setClock(400000UL);
 
-  Wire.begin();               // A4/A5
-  Wire.setClock(400000UL);    // fast-mode I2C where possible
-
-  // PCA9685
   pwm.begin();
   pwm.setPWMFreq(SERVO_PWM_FREQ);
-  delay(10);
 
-  // Center servos at mid
-  writeServo(CH_H_RIG1, H_SWEEP_MAX_DEG/2, H_SWEEP_MAX_DEG);
-  writeServo(CH_H_RIG2, H_SWEEP_MAX_DEG/2, H_SWEEP_MAX_DEG);
-  writeServo(CH_V_RIG1, V_SWEEP_MAX_DEG/2, V_SWEEP_MAX_DEG);
-  writeServo(CH_V_RIG2, V_SWEEP_MAX_DEG/2, V_SWEEP_MAX_DEG);
-
-  // IMU
   imu.initialize();
-  if (!imu.testConnection()) {
-    Serial.println(F("[IMU] connection FAILED"));
-  } else {
-    Serial.println(F("[IMU] OK"));
-  }
+  if (!imu.testConnection()) Serial.println(F("[IMU] FAIL"));
+  else Serial.println(F("[IMU] OK"));
 
-  // GPS
-  gpsSerial.begin(9600);
-
-  // ToF
   initToFTwoSensors();
-  Serial.println(F("[ToF] both sensors initialized"));
 
-  // Map init
   memset(mapRig1, 0, sizeof(mapRig1));
   memset(mapRig2, 0, sizeof(mapRig2));
-
-  // Mutex
   mapMutex = xSemaphoreCreateMutex();
 
-  // Tasks
   xTaskCreate(taskScanRig1, "scan1", 150, NULL, 3, NULL);
   xTaskCreate(taskScanRig2, "scan2", 150, NULL, 3, NULL);
-
   xTaskCreate(taskHaptics,  "hap",   160, NULL, 2, NULL);
-  xTaskCreate(taskGPS,      "gps",   180, NULL, 1, NULL);
   xTaskCreate(taskIMU,      "imu",   180, NULL, 1, NULL);
-  xTaskCreate(taskUI,       "ui",    140, NULL, 1, NULL);
-  // xTaskCreate(taskTelemetry,"tel",   200, NULL, 1, NULL);
 
-  // Small startup beep
-  beep(120);
+  beep(100);
 }
 
-void loop() {
-  // unused — FreeRTOS scheduler runs the tasks
-}
+void loop() {}

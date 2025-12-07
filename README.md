@@ -96,7 +96,8 @@ The system includes a custom-designed PCB (Caretaker Board) that integrates all 
 | **Distance Sensor** | VL53L0X | I2C | Time-of-Flight ranging |
 | **Display** | SSD1306 OLED | I2C | 128x64 visual feedback |
 | **Camera** | OV2640 | - | Image capture |
-| **Actuators** | Buzzer, LED, Servo | GPIO/PWM | User feedback and control |
+| **Feedback** | Buzzer, LED| GPIO| User feedback|
+| **Actuators** | Servos | PWM | Control |
 
 ---
 
@@ -161,14 +162,14 @@ Complete the quantities and part numbers based on your actual design:
 | 1  | VL53L0X | Module | ToF Distance Sensor | - | Adafruit breakout |
 | 1  | SSD1306 | Module | OLED Display | - | 128x64 I2C display |
 | 1  | OV2640 | Module | Camera Module | - | ESP32-CAM compatible |
-| 1  | Servo | SG90 | Micro Servo 9g | SG90 | Tower Pro |
+| 4  | Servo | SG90 | Micro Servo 9g | SG90 | Tower Pro |
 | 1  | Buzzer | THT | Active/Passive Buzzer | - | 5V buzzer |
-| 2 | LED | 0805 | Status Indicators | - | Red/Green |
-| 2 | Resistor 4.7kΩ | 0805 | I2C Pull-up Resistors | - | 1% tolerance |
-| 4 | Resistor 330Ω | 0805 | LED Current Limiting | - | - |
+| 2 | LED | THT | Status Indicators | - | Red/Green |
+| 2 | Resistor 4.7kΩ | THT | I2C Pull-up Resistors | - | 1% tolerance |
+| 4 | Resistor 330Ω | THT | LED Current Limiting | - | - |
 | 1 | Push Button | THT | User Input | 1825967-2 | Tactile switch |
-| 4 | Capacitor 0.1µF | 0805 | Decoupling Capacitors | - | Ceramic, X7R |
-| 2 | Capacitor 10µF | 0805 | Bulk Capacitors | - | Ceramic, X7R |
+| 4 | Capacitor 0.1µF | THT | Decoupling Capacitors | - | Ceramic, X7R |
+| 2 | Capacitor 470µF | THT | Bulk Capacitors | - | Ceramic, X7R |
 | 1 | Header | 2.54mm | UART/Debug | - | 4-pin header |
 | 3 | Header | 2.54mm | I2C Expansion | - | 4-pin headers |
 

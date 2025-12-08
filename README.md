@@ -372,9 +372,8 @@ I have used external power and step-down converters to provide ample power to th
 <img src="./images/implimentation_2.png" width="49%" style="position: relative; top: 0; right: 0;" />
 </div>
 <div style="display:flex;align-items:center;justify-content:space-between;" > 
-<video width="100%" height="300" controls mute>
-  <source src="./images/IMG_3474.MOV" type="video/mp4">
-  Your browser does not support the video tag.
+<video controls width="100%" height="300">
+  <source src="./images/implimentation_1.mp4"  type="video/mp4">
 </video>
 
 </div>

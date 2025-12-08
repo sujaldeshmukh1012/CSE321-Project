@@ -41,7 +41,7 @@
   - [Usage](#usage)
   - [Testing](#testing)
 - [System Architecture](#system-architecture)
-- [Roadmap](#roadmap)
+- [Implimentation](#implimentation)
 - [Contributing](#contributing)
 - [License](#license)
 - [Author](#author)
@@ -358,6 +358,32 @@ pio test
 The two modules communicate via UART to share sensor data and coordinate actions.
 
 ---
+## Implimentation
+
+The project was designed and demoed for the CSE 321 class project at University at Buffalo.
+
+I have used external power and step-down converters to provide ample power to the 5v and 3v3 systems.
+
+**The class has a constraint to use from the shelf Arduino products like Nano, Uno, Mega. So the project used the full dev boards instead of a much compact custom board using only what is needed.**
+
+
+<div style="display:flex;align-items:center;justify-content:space-between;" > 
+<img src="./images/implimentation_1.png" width="49%" style="position: relative; top: 0; right: 0;" alt="Project Logo"/>
+<img src="./images/implimentation_2.png" width="49%" style="position: relative; top: 0; right: 0;" alt="Project Logo"/>
+</div>
+<div style="display:flex;align-items:center;justify-content:space-between;" > 
+<video width="100%" height="300" controls mute>
+  <source src="./images/IMG_3474.MOV" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
+
+</div>
+
+
+
+---
+
+
 
 ## Author
 

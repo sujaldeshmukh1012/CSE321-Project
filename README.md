@@ -371,13 +371,13 @@ I have used external power and step-down converters to provide ample power to th
 <img src="./images/implimentation_1.png" width="49%" style="position: relative; top: 0; right: 0;" />
 <img src="./images/Implimentation_2.png" width="49%" style="position: relative; top: 0; right: 0;" />
 </div>
-<div style="display:flex;align-items:center;justify-content:space-between;" > 
-<video controls width="100%" height="300">
-  <source src="./images/implimentation_video.mp4"  type="video/mp4">
-</video>
 
+<br>
+<div style="display:flex;align-items:center;justify-content:center;">
+  <a href="https://www.youtube.com/shorts/iIOURSS3Xgc" style="text-decoration:none;">
+      <img src="https://img.shields.io/badge/Watch the Demo-FF0000?style=for-the-badge&logo=youtube&logoColor=white">
+  </a>
 </div>
-
 
 
 ---

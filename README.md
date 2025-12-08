@@ -3,7 +3,7 @@
 <!-- HEADER STYLE: CLASSIC -->
 <div align="center">
 
-<img src="./images/Logo.png" width="30%" style="position: relative; top: 0; right: 0;" alt="Project Logo"/>
+<img src="./images/Logo.png" width="30%" style="position: relative; top: 0; right: 0;" />
 
 # GuardianHAT
 
@@ -108,12 +108,12 @@ The system includes a custom-designed PCB (Caretaker Board) that integrates all 
 The custom Caretaker PCB was designed in KiCad to integrate all system components on a single board.
 
 <div style="display:flex;align-items:center;justify-content:space-between;" > 
-<img src="./images/pcb_render.png" width="49%" style="position: relative; top: 0; right: 0;" alt="Project Logo"/>
-<img src="./images/pcb_front.png" width="49%" style="position: relative; top: 0; right: 0;" alt="Project Logo"/>
+<img src="./images/pcb_render.png" width="49%" style="position: relative; top: 0; right: 0;" />
+<img src="./images/pcb_front.png" width="49%" style="position: relative; top: 0; right: 0;" />
 </div>
 <div style="display:flex;align-items:center;justify-content:space-between;" > 
-<img src="./images/pcb_assembled.png" width="49%" style="position: relative; top: 10; right: 0;" alt="Project Logo"/>
-<img src="./images/pcb_schematics.png" width="49%" style="position: relative; top: 10; right: 0;" alt="Project Logo"/>
+<img src="./images/pcb_assembled.png" width="49%" style="position: relative; top: 10; right: 0;" />
+<img src="./images/pcb_schematics.png" width="49%" style="position: relative; top: 10; right: 0;" />
 </div>
 
 
@@ -368,8 +368,8 @@ I have used external power and step-down converters to provide ample power to th
 
 
 <div style="display:flex;align-items:center;justify-content:space-between;" > 
-<img src="./images/implimentation_1.png" width="49%" style="position: relative; top: 0; right: 0;" alt="Project Logo"/>
-<img src="./images/implimentation_2.png" width="49%" style="position: relative; top: 0; right: 0;" alt="Project Logo"/>
+<img src="./images/implimentation_1.png" width="49%" style="position: relative; top: 0; right: 0;" />
+<img src="./images/implimentation_2.png" width="49%" style="position: relative; top: 0; right: 0;" />
 </div>
 <div style="display:flex;align-items:center;justify-content:space-between;" > 
 <video width="100%" height="300" controls mute>

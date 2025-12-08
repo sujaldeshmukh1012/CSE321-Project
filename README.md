@@ -369,7 +369,7 @@ I have used external power and step-down converters to provide ample power to th
 
 <div style="display:flex;align-items:center;justify-content:space-between;" > 
 <img src="./images/implimentation_1.png" width="49%" style="position: relative; top: 0; right: 0;" />
-<img src="./images/implimentation_2.png" width="49%" style="position: relative; top: 0; right: 0;" />
+<img src="./images/Implimentation_2.png" width="49%" style="position: relative; top: 0; right: 0;" />
 </div>
 <div style="display:flex;align-items:center;justify-content:space-between;" > 
 <video controls width="100%" height="300">
